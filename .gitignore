@@ -1,0 +1,23 @@
+# Credentials — never commit tokens
+.env
+*.tfvars
+
+# Binaries
+terraform-provider-slack-app
+dist/
+
+# Go
+*.test
+*.out
+
+# Terraform working files (from local testing)
+.terraform/
+.terraform.lock.hcl
+terraform.tfstate
+terraform.tfstate.backup
+crash.log
+
+# Editors
+.idea/
+.vscode/
+.DS_Store

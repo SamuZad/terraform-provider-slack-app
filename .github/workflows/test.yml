@@ -1,0 +1,54 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: "go.mod"
+          cache: true
+      - run: go mod verify
+      - run: go build -v ./...
+      - run: go vet ./...
+      - name: gofmt
+        run: |
+          files=$(gofmt -l .)
+          if [ -n "$files" ]; then
+            echo "gofmt needed on:" && echo "$files" && exit 1
+          fi
+      - name: Check docs are up to date
+        run: |
+          go generate ./...
+          git diff --exit-code -- docs/ || \
+            (echo "docs/ is stale; run 'go generate ./...' and commit" && exit 1)
+
+  test:
+    name: Acceptance tests (Terraform ${{ matrix.terraform }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        terraform: ["1.5.*", "1.9.*", "latest"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: "go.mod"
+          cache: true
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ matrix.terraform }}
+          terraform_wrapper: false
+      # The acceptance tests run against an in-process fake Slack API, so no
+      # credentials or TF_ACC opt-in are required.
+      - run: go test -v ./...
