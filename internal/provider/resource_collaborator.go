@@ -97,6 +97,15 @@ func (r *collaboratorResource) Configure(_ context.Context, req resource.Configu
 	r.client = req.ProviderData.(*SlackClient)
 }
 
+func addTokenUserGuardError(diags *diag.Diagnostics, email string) {
+	diags.AddError(
+		"Cannot Manage Token User as Collaborator",
+		fmt.Sprintf("%q is the user the provider token belongs to. Removing them as a collaborator would "+
+			"revoke the provider's own access to the app and orphan its resources, so this resource refuses "+
+			"to manage them. The token user is already a collaborator on every app it creates.", email),
+	)
+}
+
 // isTokenUser reports whether email belongs to the user the provider token is
 // issued for. The token user must never be managed by this resource: removing
 // them as a collaborator (which Terraform would do on destroy) would strip the
@@ -118,12 +127,7 @@ func (r *collaboratorResource) isTokenUser(ctx context.Context, appID, email, ac
 		return true
 	}
 	if strings.EqualFold(tokenEmail, email) {
-		diags.AddError(
-			"Cannot Manage Token User as Collaborator",
-			fmt.Sprintf("%q is the user the provider token belongs to. Removing them as a collaborator would "+
-				"revoke the provider's own access to the app and orphan its resources, so this resource refuses "+
-				"to manage them. The token user is already a collaborator on every app it creates.", email),
-		)
+		addTokenUserGuardError(diags, email)
 		return true
 	}
 	return false
@@ -161,12 +165,7 @@ func (r *collaboratorResource) ModifyPlan(ctx context.Context, req resource.Modi
 	}
 
 	if tokenEmail, err := r.client.TokenUserEmail(ctx, appID); err == nil && strings.EqualFold(tokenEmail, email) {
-		resp.Diagnostics.AddError(
-			"Cannot Manage Token User as Collaborator",
-			fmt.Sprintf("%q is the user the provider token belongs to. Removing them as a collaborator would "+
-				"revoke the provider's own access to the app and orphan its resources, so this resource refuses "+
-				"to manage them. The token user is already a collaborator on every app it creates.", email),
-		)
+		addTokenUserGuardError(&resp.Diagnostics, email)
 		return
 	}
 
