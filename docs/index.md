@@ -23,7 +23,7 @@ Both credential types are issued to a specific Slack user. That user is a collab
 ```terraform
 provider "slack-app" {
   # A Slack CLI service token (`slack auth token`), or an app configuration
-  # token for manifest-only usage. Can also be set via SLACK_CLI_TOKEN.
+  # token for manifest-only usage. Can also be set via SLACK_TOKEN.
   token = var.slack_token
 }
 ```
@@ -36,4 +36,4 @@ provider "slack-app" {
 - `approval_timeout_seconds` (Number) How long `slack-app_install` waits for an admin approval request to be granted before failing. Defaults to 3600 (1 hour).
 - `base_url` (String) Base URL of the Slack API, for GovSlack or testing. Defaults to `https://slack.com/api/`.
 - `team_id` (String) The workspace (team) ID installation approvals are requested for. Defaults to the workspace the token belongs to; only needs setting in Enterprise Grid setups where the token user spans multiple workspaces.
-- `token` (String, Sensitive) A Slack CLI service token from `slack auth token`, or an app configuration token (manifest resource only). Can be set via the `SLACK_CLI_TOKEN` environment variable, with `SLACK_TOKEN` as a fallback.
+- `token` (String, Sensitive) A Slack CLI service token from `slack auth token`, or an app configuration token (manifest resource only). Can be set via the `SLACK_TOKEN` environment variable.

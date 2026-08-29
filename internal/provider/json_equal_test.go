@@ -17,6 +17,19 @@ func TestJSONSemanticallyEqual(t *testing.T) {
 		{"scalar types", `{"n":1,"b":true,"z":null}`, `{"b":true,"z":null,"n":1}`, true},
 		{"number vs string", `{"n":1}`, `{"n":"1"}`, false},
 		{"invalid json", `notjson`, `notjson`, false},
+		{"server defaults normalized on both sides",
+			`{"features":{"bot_user":{"display_name":"x"}}}`,
+			`{"features":{"bot_user":{"display_name":"x","always_online":true}},"settings":{"org_deploy_enabled":false,"socket_mode_enabled":false,"is_mcp_enabled":false,"token_rotation_enabled":false}}`,
+			true},
+		{"drift away from a default is a diff",
+			`{"features":{"bot_user":{"display_name":"x"}}}`,
+			`{"features":{"bot_user":{"display_name":"x","always_online":false}}}`,
+			false},
+		{"authored key missing remotely is a diff", `{"a":1,"b":2}`, `{"a":1}`, false},
+		{"pkce default normalized",
+			`{"oauth_config":{"scopes":{"bot":["chat:write"]}}}`,
+			`{"oauth_config":{"scopes":{"bot":["chat:write"]},"pkce_enabled":false}}`,
+			true},
 	}
 	for _, c := range cases {
 		if got := jsonSemanticallyEqual(c.a, c.b); got != c.want {

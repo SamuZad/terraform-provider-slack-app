@@ -30,7 +30,7 @@ resource "slack-app_manifest" "example" {
 
 ### Required
 
-- `manifest` (String) A JSON app manifest encoded as a string. Compared semantically: changes to object key order, whitespace, or array element order (Slack treats manifest arrays such as scopes as sets) do not produce a diff.
+- `manifest` (String) A JSON app manifest encoded as a string. Compared semantically: changes to object key order, whitespace, or array element order (Slack treats manifest arrays such as scopes as sets) do not produce a diff. Attributes Slack adds server-side (`always_online`, `pkce_enabled`, `is_mcp_enabled`, `token_rotation_enabled`, ...) are normalized to their known default values, so omitting them in config is not a diff — but a remote value changed away from its default is.
 
 ### Optional
 

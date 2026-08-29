@@ -49,6 +49,9 @@ type fakeSlack struct {
 
 	apps      map[string]*fakeApp
 	approvals []*fakeApproval
+	// lastUpdatedManifest is the raw manifest string received by the most
+	// recent apps.manifest.update call, before enrichment.
+	lastUpdatedManifest string
 	nextApp   int
 	nextUser  int
 	nextToken int
@@ -68,6 +71,12 @@ func newFakeSlack(t *testing.T, requireApproval bool) *fakeSlack {
 }
 
 func (f *fakeSlack) url() string { return f.server.URL + "/" }
+
+func (f *fakeSlack) lastUpdate() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lastUpdatedManifest
+}
 
 func (f *fakeSlack) approvalCount() int {
 	f.mu.Lock()
@@ -112,6 +121,15 @@ func (f *fakeSlack) hasOwner(email string) bool {
 		}
 	}
 	return false
+}
+
+// enrichManifest mimics real Slack behavior: stored manifests gain the
+// server-side defaults observed from apps.manifest.export (always_online=true,
+// pkce_enabled=false, is_mcp_enabled=false, token_rotation_enabled=false).
+// This must stay in sync with applyManifestDefaults, which is exactly what
+// the manifest acceptance tests verify.
+func enrichManifest(manifest interface{}) interface{} {
+	return applyManifestDefaults(manifest)
 }
 
 func writeJSON(w http.ResponseWriter, v interface{}) {
@@ -161,7 +179,7 @@ func (f *fakeSlack) handle(w http.ResponseWriter, r *http.Request) {
 		f.nextApp++
 		id := fmt.Sprintf("A%07d", f.nextApp)
 		f.apps[id] = &fakeApp{
-			Manifest: manifest,
+			Manifest: enrichManifest(manifest),
 			Owners:   []fakeOwner{{Email: fakeTokenUserEmail, UserID: fakeTokenUserID, PermissionType: "owner"}},
 		}
 		writeJSON(w, map[string]interface{}{
@@ -195,7 +213,8 @@ func (f *fakeSlack) handle(w http.ResponseWriter, r *http.Request) {
 			fakeAPIError(w, "invalid_manifest")
 			return
 		}
-		app.Manifest = manifest
+		f.lastUpdatedManifest = param(p, "manifest")
+		app.Manifest = enrichManifest(manifest)
 		writeJSON(w, map[string]interface{}{"ok": true})
 
 	case "/apps.manifest.delete":

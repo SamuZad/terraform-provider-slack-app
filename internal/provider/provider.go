@@ -55,8 +55,7 @@ func (p *slackAppProvider) Schema(_ context.Context, _ provider.SchemaRequest, r
 				Sensitive: true,
 				MarkdownDescription: "A Slack CLI service token from `slack auth token`, or an app " +
 					"configuration token (manifest resource only). " +
-					"Can be set via the `SLACK_CLI_TOKEN` environment variable, with `SLACK_TOKEN` " +
-					"as a fallback.",
+					"Can be set via the `SLACK_TOKEN` environment variable.",
 			},
 			"base_url": schema.StringAttribute{
 				Optional: true,
@@ -87,11 +86,7 @@ func (p *slackAppProvider) Configure(ctx context.Context, req provider.Configure
 		return
 	}
 	if config.Token.IsNull() {
-		token := os.Getenv("SLACK_CLI_TOKEN")
-		if token == "" {
-			token = os.Getenv("SLACK_TOKEN")
-		}
-		config.Token = types.StringValue(token)
+		config.Token = types.StringValue(os.Getenv("SLACK_TOKEN"))
 	}
 	client := NewSlackClient(config.Token.ValueString())
 	if !config.BaseURL.IsNull() {

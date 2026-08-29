@@ -6,7 +6,7 @@ can wait for admin approval first).
 
 ```hcl
 provider "slack-app" {
-  token = var.slack_token # or SLACK_CLI_TOKEN / SLACK_TOKEN
+  token = var.slack_token # or the SLACK_TOKEN environment variable
 }
 
 resource "slack-app_manifest" "bot" {

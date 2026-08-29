@@ -87,7 +87,10 @@ func (r *manifestResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				Required: true,
 				MarkdownDescription: "A JSON app manifest encoded as a string. Compared semantically: " +
 					"changes to object key order, whitespace, or array element order (Slack treats manifest " +
-					"arrays such as scopes as sets) do not produce a diff.",
+					"arrays such as scopes as sets) do not produce a diff. Attributes Slack adds server-side " +
+					"(`always_online`, `pkce_enabled`, `is_mcp_enabled`, `token_rotation_enabled`, ...) are " +
+					"normalized to their known default values, so omitting them in config is not a diff — " +
+					"but a remote value changed away from its default is.",
 				PlanModifiers: []planmodifier.String{
 					manifestSemanticEquality{},
 				},
@@ -172,7 +175,7 @@ func (m manifestSemanticEquality) PlanModifyString(_ context.Context, req planmo
 	if req.StateValue.IsNull() || req.PlanValue.IsNull() || req.PlanValue.IsUnknown() {
 		return
 	}
-	if jsonSemanticallyEqual(req.StateValue.ValueString(), req.PlanValue.ValueString()) {
+	if jsonSemanticallyEqual(req.PlanValue.ValueString(), req.StateValue.ValueString()) {
 		resp.PlanValue = req.StateValue
 	}
 }
@@ -223,7 +226,7 @@ func (r *manifestResource) Create(ctx context.Context, req resource.CreateReques
 
 	var result manifestCreateResponse
 	err := r.client.JSONRequest(ctx, "apps.manifest.create", manifestRequest{
-		Manifest: plan.Manifest.ValueString(),
+		Manifest: normalizeManifest(plan.Manifest.ValueString()),
 	}, &result)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create app: %s", err))
@@ -277,7 +280,7 @@ func (r *manifestResource) Update(ctx context.Context, req resource.UpdateReques
 
 	err := r.client.JSONRequest(ctx, "apps.manifest.update", manifestRequest{
 		AppID:    plan.ID.ValueString(),
-		Manifest: plan.Manifest.ValueString(),
+		Manifest: normalizeManifest(plan.Manifest.ValueString()),
 	}, nil)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to update app: %s", err))

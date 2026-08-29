@@ -1,8 +1,10 @@
 default: test
 
+# Writes the provider binary to the repo root, where the ~/.terraformrc
+# dev_overrides entry can pick it up.
 .PHONY: build
 build:
-	go build -v ./...
+	go build -v -o terraform-provider-slack-app .
 
 .PHONY: fmt
 fmt:
