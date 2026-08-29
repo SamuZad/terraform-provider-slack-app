@@ -33,8 +33,9 @@ func TestAccInstallResource(t *testing.T) {
 				Config: providerConfig(f) + manifestConfig("app", []string{"chat:write", "channels:read"}) + installConfig,
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("slack-app_install.test", "bot_token", "xoxb-fake-A0000001"),
-					resource.TestCheckResourceAttr("slack-app_install.test", "user_token", "xoxp-fake-A0000001"),
-					resource.TestCheckResourceAttr("slack-app_install.test", "bot_scopes.#", "2"),
+					resource.TestCheckNoResourceAttr("slack-app_install.test", "user_token"),
+					resource.TestCheckResourceAttr("slack-app_install.test", "scopes.bot.#", "2"),
+					resource.TestCheckResourceAttr("slack-app_install.test", "scopes.user.#", "0"),
 				),
 			},
 			// Import by app ID recovers the same tokens via the idempotent
@@ -61,19 +62,93 @@ func TestAccInstallResource(t *testing.T) {
 				Config:             providerConfig(f) + manifestConfig("app", []string{"chat:write", "channels:read", "users:read"}) + installConfig,
 				ExpectNonEmptyPlan: true,
 			},
-			// That next plan replaces the install; Slack re-issues the same
+			// That next plan re-installs in place; Slack re-issues the same
 			// token, now carrying the new scope grants.
 			{
 				Config: providerConfig(f) + manifestConfig("app", []string{"chat:write", "channels:read", "users:read"}) + installConfig,
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
-						plancheck.ExpectResourceAction("slack-app_install.test", plancheck.ResourceActionReplace),
+						plancheck.ExpectResourceAction("slack-app_install.test", plancheck.ResourceActionUpdate),
 					},
 				},
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("slack-app_install.test", "bot_scopes.#", "3"),
+					resource.TestCheckResourceAttr("slack-app_install.test", "scopes.bot.#", "3"),
 					resource.TestCheckResourceAttr("slack-app_install.test", "bot_token", "xoxb-fake-A0000001"),
 				),
+			},
+		},
+	})
+}
+
+const wiredInstallConfig = `
+resource "slack-app_install" "test" {
+  app_id     = slack-app_manifest.test.id
+  scopes     = slack-app_manifest.test.scopes
+}
+`
+
+// Wiring bot_scopes to the manifest resource makes a scope change re-install the
+// install in the SAME run as the manifest update.
+func TestAccInstallResourceWiredScopes(t *testing.T) {
+	f := newFakeSlack(t, false)
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: providerConfig(f) + manifestConfig("app", []string{"chat:write", "channels:read"}) + wiredInstallConfig,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet("slack-app_install.test", "bot_token"),
+					resource.TestCheckResourceAttr("slack-app_install.test", "scopes.bot.#", "2"),
+				),
+			},
+			// Scope change: manifest update and in-place re-install in one run.
+			// The post-apply plan must be empty (no second apply needed).
+			{
+				Config: providerConfig(f) + manifestConfig("app", []string{"chat:write", "channels:read", "channels:history"}) + wiredInstallConfig,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("slack-app_install.test", plancheck.ResourceActionUpdate),
+					},
+				},
+				Check: resource.TestCheckResourceAttr("slack-app_install.test", "scopes.bot.#", "3"),
+			},
+			// Adding a USER scope re-installs the same way and issues a user
+			// token.
+			{
+				Config: providerConfig(f) + manifestConfigWithUserScopes("app", []string{"chat:write", "channels:read", "channels:history"}, []string{"search:read"}) + wiredInstallConfig,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("slack-app_install.test", plancheck.ResourceActionUpdate),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("slack-app_install.test", "scopes.user.#", "1"),
+					resource.TestCheckResourceAttr("slack-app_install.test", "user_token", "xoxp-fake-A0000001"),
+				),
+			},
+			// Reordering scopes stays a no-op end to end.
+			{
+				Config:   providerConfig(f) + manifestConfigWithUserScopes("app", []string{"channels:history", "chat:write", "channels:read"}, []string{"search:read"}) + wiredInstallConfig,
+				PlanOnly: true,
+			},
+		},
+	})
+}
+
+// A nonexistent or inaccessible app produces a clear error, not a raw
+// endpoint/error-code chain.
+func TestAccInstallResourceAppNotFound(t *testing.T) {
+	f := newFakeSlack(t, false)
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: providerConfig(f) + `
+resource "slack-app_install" "test" {
+  app_id = "A0000000404"
+}
+`,
+				ExpectError: regexp.MustCompile(`(?s)App Not Found or Not Accessible.*does not recognize app "A0000000404"`),
 			},
 		},
 	})
@@ -124,13 +199,13 @@ func TestAccInstallResourceWithApproval(t *testing.T) {
 				Config:             providerConfig(f) + manifestConfig("app", []string{"chat:write", "users:read"}) + installWithApprovalConfig,
 				ExpectNonEmptyPlan: true,
 			},
-			// A reinstall of an already-approved app does not re-submit for
+			// A re-install of an already-approved app does not re-submit for
 			// approval: the direct install succeeds first.
 			{
 				Config: providerConfig(f) + manifestConfig("app", []string{"chat:write", "users:read"}) + installWithApprovalConfig,
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
-						plancheck.ExpectResourceAction("slack-app_install.test", plancheck.ResourceActionReplace),
+						plancheck.ExpectResourceAction("slack-app_install.test", plancheck.ResourceActionUpdate),
 					},
 				},
 				Check: func(*terraform.State) error {

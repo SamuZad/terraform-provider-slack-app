@@ -36,7 +36,7 @@ resource "slack-app_collaborator" "example" {
 
 ### Optional
 
-- `permission_type` (String) Collaborator permission: `owner` or `reader`.
+- `permission_type` (String) Collaborator permission: `owner` or `reader`. Defaults to `owner`.
 
 ### Read-Only
 

@@ -54,6 +54,26 @@ func TestAccCollaboratorResource(t *testing.T) {
 	})
 }
 
+// A collaborator on a nonexistent app fails at plan time with a clear error.
+func TestAccCollaboratorResourceAppNotFound(t *testing.T) {
+	f := newFakeSlack(t, false)
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: providerConfig(f) + `
+resource "slack-app_collaborator" "test" {
+  app_id     = "A0000000404"
+  user_email = "dev@example.com"
+}
+`,
+				PlanOnly:    true,
+				ExpectError: regexp.MustCompile(`(?s)App Not Found or Not Accessible.*does not recognize app "A0000000404"`),
+			},
+		},
+	})
+}
+
 func TestAccCollaboratorResourceRefusesTokenUser(t *testing.T) {
 	f := newFakeSlack(t, false)
 	resource.UnitTest(t, resource.TestCase{
@@ -75,11 +95,12 @@ func TestAccCollaboratorResourceAlreadyOwner(t *testing.T) {
 			{
 				Config: providerConfig(f) + manifestConfig("app", []string{"chat:write"}),
 			},
-			// Someone added out-of-band: create errors and points at import.
+			// Someone added out-of-band: the PLAN already errors and points at
+			// import (the app exists in state, so its ID is known at plan time).
 			{
 				PreConfig:   func() { f.addOwner("existing@example.com") },
 				Config:      providerConfig(f) + manifestConfig("app", []string{"chat:write"}) + collaboratorConfig("existing@example.com"),
-				ExpectError: regexp.MustCompile("user_already_owner"),
+				ExpectError: regexp.MustCompile(`(?s)already a collaborator.*import`),
 			},
 		},
 	})

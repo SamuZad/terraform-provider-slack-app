@@ -52,10 +52,9 @@ type fakeSlack struct {
 	// lastUpdatedManifest is the raw manifest string received by the most
 	// recent apps.manifest.update call, before enrichment.
 	lastUpdatedManifest string
-	nextApp   int
-	nextUser  int
-	nextToken int
-	nextReq   int
+	nextApp             int
+	nextUser            int
+	nextReq             int
 
 	server *httptest.Server
 }
@@ -123,15 +122,6 @@ func (f *fakeSlack) hasOwner(email string) bool {
 	return false
 }
 
-// enrichManifest mimics real Slack behavior: stored manifests gain the
-// server-side defaults observed from apps.manifest.export (always_online=true,
-// pkce_enabled=false, is_mcp_enabled=false, token_rotation_enabled=false).
-// This must stay in sync with applyManifestDefaults, which is exactly what
-// the manifest acceptance tests verify.
-func enrichManifest(manifest interface{}) interface{} {
-	return applyManifestDefaults(manifest)
-}
-
 func writeJSON(w http.ResponseWriter, v interface{}) {
 	_ = json.NewEncoder(w).Encode(v)
 }
@@ -179,7 +169,8 @@ func (f *fakeSlack) handle(w http.ResponseWriter, r *http.Request) {
 		f.nextApp++
 		id := fmt.Sprintf("A%07d", f.nextApp)
 		f.apps[id] = &fakeApp{
-			Manifest: enrichManifest(manifest),
+			// Slack enriches stored manifests with server-side defaults.
+			Manifest: applyManifestDefaults(manifest),
 			Owners:   []fakeOwner{{Email: fakeTokenUserEmail, UserID: fakeTokenUserID, PermissionType: "owner"}},
 		}
 		writeJSON(w, map[string]interface{}{
@@ -214,7 +205,7 @@ func (f *fakeSlack) handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		f.lastUpdatedManifest = param(p, "manifest")
-		app.Manifest = enrichManifest(manifest)
+		app.Manifest = applyManifestDefaults(manifest)
 		writeJSON(w, map[string]interface{}{"ok": true})
 
 	case "/apps.manifest.delete":
@@ -289,14 +280,16 @@ func (f *fakeSlack) handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// developerInstall is idempotent: repeated installs re-issue the same
-		// tokens for the app, matching observed real-API behavior.
+		// tokens for the app, matching observed real-API behavior. A user
+		// token is only issued when user scopes were requested.
 		appID := param(p, "app_id")
+		tokens := map[string]string{"bot": "xoxb-fake-" + appID}
+		if userScopes, _ := p["user_scopes"].([]interface{}); len(userScopes) > 0 {
+			tokens["user"] = "xoxp-fake-" + appID
+		}
 		writeJSON(w, map[string]interface{}{
-			"ok": true,
-			"api_access_tokens": map[string]string{
-				"bot":  "xoxb-fake-" + appID,
-				"user": "xoxp-fake-" + appID,
-			},
+			"ok":                true,
+			"api_access_tokens": tokens,
 		})
 
 	case "/apps.approvals.requests.create":

@@ -24,6 +24,7 @@ resource "slack-app_collaborator" "dev" {
 
 resource "slack-app_install" "bot" {
   app_id          = slack-app_manifest.bot.id
+  scopes          = slack-app_manifest.bot.scopes # re-install on scope changes
   approval_reason = "CI-managed app"
 }
 ```

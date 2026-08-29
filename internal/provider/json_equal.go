@@ -56,6 +56,23 @@ func normalizeManifest(manifest string) string {
 	return string(normalized)
 }
 
+// scopesFromManifest extracts oauth_config.scopes from a manifest JSON
+// string; empty scopes for invalid JSON or when none are declared.
+func scopesFromManifest(manifest string) oauthScopes {
+	var v struct {
+		OAuthConfig struct {
+			Scopes struct {
+				Bot  []string `json:"bot"`
+				User []string `json:"user"`
+			} `json:"scopes"`
+		} `json:"oauth_config"`
+	}
+	if err := json.Unmarshal([]byte(manifest), &v); err != nil {
+		return oauthScopes{}
+	}
+	return oauthScopes{Bot: v.OAuthConfig.Scopes.Bot, User: v.OAuthConfig.Scopes.User}
+}
+
 // jsonSemanticallyEqual reports whether two manifests are equal after
 // normalization: Slack's server-side defaults are applied to both sides, and
 // object key order, whitespace, and array element order are ignored (Slack

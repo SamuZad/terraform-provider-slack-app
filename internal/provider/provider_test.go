@@ -22,11 +22,15 @@ provider "slack-app" {
 `, f.url())
 }
 
-func manifestConfig(name string, scopes []string) string {
+func quoteScopes(scopes []string) string {
 	quoted := make([]string, len(scopes))
 	for i, scope := range scopes {
 		quoted[i] = strconv.Quote(scope)
 	}
+	return strings.Join(quoted, ", ")
+}
+
+func manifestConfig(name string, scopes []string) string {
 	return fmt.Sprintf(`
 resource "slack-app_manifest" "test" {
   manifest = jsonencode({
@@ -35,5 +39,17 @@ resource "slack-app_manifest" "test" {
     oauth_config        = { scopes = { bot = [%s] } }
   })
 }
-`, name, name, strings.Join(quoted, ", "))
+`, name, name, quoteScopes(scopes))
+}
+
+func manifestConfigWithUserScopes(name string, botScopes, userScopes []string) string {
+	return fmt.Sprintf(`
+resource "slack-app_manifest" "test" {
+  manifest = jsonencode({
+    display_information = { name = %q }
+    features            = { bot_user = { display_name = %q } }
+    oauth_config        = { scopes = { bot = [%s], user = [%s] } }
+  })
+}
+`, name, name, quoteScopes(botScopes), quoteScopes(userScopes))
 }

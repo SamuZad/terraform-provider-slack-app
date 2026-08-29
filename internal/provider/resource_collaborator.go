@@ -2,7 +2,6 @@ package provider
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -23,6 +22,7 @@ var (
 	_ resource.Resource                = &collaboratorResource{}
 	_ resource.ResourceWithConfigure   = &collaboratorResource{}
 	_ resource.ResourceWithImportState = &collaboratorResource{}
+	_ resource.ResourceWithModifyPlan  = &collaboratorResource{}
 )
 
 func NewCollaboratorResource() resource.Resource {
@@ -78,7 +78,7 @@ func (r *collaboratorResource) Schema(_ context.Context, _ resource.SchemaReques
 				Optional:            true,
 				Computed:            true,
 				Default:             stringdefault.StaticString("owner"),
-				MarkdownDescription: "Collaborator permission: `owner` or `reader`.",
+				MarkdownDescription: "Collaborator permission: `owner` or `reader`. Defaults to `owner`.",
 				Validators: []validator.String{
 					stringvalidator.OneOf("owner", "reader"),
 				},
@@ -104,16 +104,9 @@ func (r *collaboratorResource) Configure(_ context.Context, req resource.Configu
 func (r *collaboratorResource) isTokenUser(ctx context.Context, appID, email, action string, diags *diag.Diagnostics) bool {
 	tokenEmail, err := r.client.TokenUserEmail(ctx, appID)
 	if err != nil {
-		var apiErr *APIError
-		if errors.As(err, &apiErr) && apiErr.Code == "app_not_found" {
-			diags.AddError(
-				"App Not Found or Not Accessible",
-				fmt.Sprintf("Slack returned `app_not_found` for app %q while trying to %s collaborator %q. "+
-					"Slack does not distinguish between an app that does not exist and one the token's user has "+
-					"no access to, so either the app ID is wrong (or the app was deleted outside Terraform), or "+
-					"the provider token's user is not a collaborator on this app. Verify the app ID and that the "+
-					"token user is a collaborator on the app.", appID, action, email),
-			)
+		if isAppAccessError(err) {
+			diags.AddError("App Not Found or Not Accessible",
+				fmt.Sprintf("Cannot %s collaborator %q: %s", action, email, appAccessErrorDetail(appID)))
 			return true
 		}
 		diags.AddError(
@@ -134,6 +127,59 @@ func (r *collaboratorResource) isTokenUser(ctx context.Context, appID, email, ac
 		return true
 	}
 	return false
+}
+
+// ModifyPlan validates a planned create against the live app at plan time,
+// so an invalid app, the token user, or an already-existing collaborator
+// fails the plan instead of the apply. Skipped when the app ID is not yet
+// known (the app is created in the same run); the apply-time guards remain
+// as the backstop for that case.
+func (r *collaboratorResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	// Only creates: destroys are guarded in Delete, and existing resources
+	// are validated by Read during refresh.
+	if req.Plan.Raw.IsNull() || !req.State.Raw.IsNull() {
+		return
+	}
+
+	var plan collaboratorResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if plan.AppID.IsUnknown() || plan.UserEmail.IsUnknown() {
+		return
+	}
+	appID, email := plan.AppID.ValueString(), plan.UserEmail.ValueString()
+
+	owners, err := r.client.ListOwners(ctx, appID)
+	if err != nil {
+		if isAppAccessError(err) {
+			resp.Diagnostics.AddError("App Not Found or Not Accessible", appAccessErrorDetail(appID))
+		}
+		// Transient errors are left for the apply to surface.
+		return
+	}
+
+	if tokenEmail, err := r.client.TokenUserEmail(ctx, appID); err == nil && strings.EqualFold(tokenEmail, email) {
+		resp.Diagnostics.AddError(
+			"Cannot Manage Token User as Collaborator",
+			fmt.Sprintf("%q is the user the provider token belongs to. Removing them as a collaborator would "+
+				"revoke the provider's own access to the app and orphan its resources, so this resource refuses "+
+				"to manage them. The token user is already a collaborator on every app it creates.", email),
+		)
+		return
+	}
+
+	for _, owner := range owners.Owners {
+		if strings.EqualFold(owner.UserEmail, email) {
+			resp.Diagnostics.AddError(
+				"Collaborator Already Exists",
+				fmt.Sprintf("%q is already a collaborator on app %s. Adopt it instead of recreating it: "+
+					"terraform import <resource address> %s/%s", email, appID, appID, email),
+			)
+			return
+		}
+	}
 }
 
 func (r *collaboratorResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -170,8 +216,7 @@ func (r *collaboratorResource) Read(ctx context.Context, req resource.ReadReques
 
 	owners, err := r.client.ListOwners(ctx, state.AppID.ValueString())
 	if err != nil {
-		var apiErr *APIError
-		if errors.As(err, &apiErr) && apiErr.Code == "app_not_found" {
+		if isAppAccessError(err) {
 			// The app is gone (or no longer accessible), so the collaborator is too.
 			resp.State.RemoveResource(ctx)
 			return

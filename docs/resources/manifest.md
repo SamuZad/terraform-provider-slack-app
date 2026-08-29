@@ -36,7 +36,7 @@ resource "slack-app_manifest" "example" {
 
 - `client_id` (String) OAuth client ID. Set by Slack at creation; set manually to backfill imported apps.
 - `client_secret` (String, Sensitive) OAuth client secret. Set by Slack at creation; set manually to backfill imported apps.
-- `export_credentials` (Boolean) Whether to export generated credentials and the OAuth authorization URL to Terraform state. Set to `false` to keep them out of state. Credential attributes set explicitly in config are kept regardless, since they are already in config.
+- `export_credentials` (Boolean) Whether to export generated credentials and the OAuth authorization URL to Terraform state. Defaults to `true`; set to `false` to keep them out of state. Credential attributes set explicitly in config are kept regardless, since they are already in config.
 - `signing_secret` (String, Sensitive) Secret used to verify that requests come from Slack. Set by Slack at creation; set manually to backfill imported apps.
 - `verification_token` (String, Sensitive, Deprecated) Deprecated Slack request verification token. Prefer `signing_secret`.
 
@@ -44,6 +44,15 @@ resource "slack-app_manifest" "example" {
 
 - `id` (String) The app ID.
 - `oauth_authorize_url` (String) Full URL for OAuth authorization.
+- `scopes` (Attributes) The OAuth scopes declared in the manifest (`oauth_config.scopes`), resolved at plan time. Wire `slack-app_install.scopes` to this attribute so scope changes re-install the app in the same run. (see [below for nested schema](#nestedatt--scopes))
+
+<a id="nestedatt--scopes"></a>
+### Nested Schema for `scopes`
+
+Read-Only:
+
+- `bot` (Set of String) Bot scopes (`oauth_config.scopes.bot`).
+- `user` (Set of String) User scopes (`oauth_config.scopes.user`).
 
 ## Import
 

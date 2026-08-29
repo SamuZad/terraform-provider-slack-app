@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -32,6 +33,7 @@ type manifestResource struct {
 type manifestResourceModel struct {
 	ID                types.String `tfsdk:"id"`
 	Manifest          types.String `tfsdk:"manifest"`
+	Scopes            types.Object `tfsdk:"scopes"`
 	ExportCredentials types.Bool   `tfsdk:"export_credentials"`
 	ClientID          types.String `tfsdk:"client_id"`
 	ClientSecret      types.String `tfsdk:"client_secret"`
@@ -95,13 +97,24 @@ func (r *manifestResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 					manifestSemanticEquality{},
 				},
 			},
+			"scopes": schema.SingleNestedAttribute{
+				Computed:   true,
+				Attributes: scopesSchemaAttributes(false),
+				MarkdownDescription: "The OAuth scopes declared in the manifest (`oauth_config.scopes`), " +
+					"resolved at plan time. Wire `slack-app_install.scopes` to this attribute so scope " +
+					"changes re-install the app in the same run.",
+				PlanModifiers: []planmodifier.Object{
+					manifestScopes{},
+				},
+			},
 			"export_credentials": schema.BoolAttribute{
 				Optional: true,
 				Computed: true,
 				Default:  booldefault.StaticBool(true),
 				MarkdownDescription: "Whether to export generated credentials and the OAuth authorization URL " +
-					"to Terraform state. Set to `false` to keep them out of state. Credential attributes set " +
-					"explicitly in config are kept regardless, since they are already in config.",
+					"to Terraform state. Defaults to `true`; set to `false` to keep them out of state. " +
+					"Credential attributes set explicitly in config are kept regardless, since they are " +
+					"already in config.",
 			},
 			"client_id": schema.StringAttribute{
 				Optional:            true,
@@ -180,6 +193,43 @@ func (m manifestSemanticEquality) PlanModifyString(_ context.Context, req planmo
 	}
 }
 
+// manifestScopes derives the computed scopes attribute from the planned
+// manifest, so it is known at plan time and downstream references (an install
+// wired to it) see scope changes in the same plan. Set semantics make element
+// order irrelevant, so pure reordering never ripples into dependent resources.
+type manifestScopes struct{}
+
+func (m manifestScopes) Description(ctx context.Context) string {
+	return m.MarkdownDescription(ctx)
+}
+
+func (m manifestScopes) MarkdownDescription(context.Context) string {
+	return "Derives scopes from the planned manifest at plan time."
+}
+
+func (m manifestScopes) PlanModifyObject(ctx context.Context, req planmodifier.ObjectRequest, resp *planmodifier.ObjectResponse) {
+	var manifest types.String
+	resp.Diagnostics.Append(req.Plan.GetAttribute(ctx, path.Root("manifest"), &manifest)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if manifest.IsUnknown() || manifest.IsNull() {
+		resp.PlanValue = types.ObjectUnknown(scopesAttrTypes())
+		return
+	}
+
+	value, diags := scopesObject(ctx, scopesFromManifest(manifest.ValueString()))
+	resp.Diagnostics.Append(diags...)
+	resp.PlanValue = value
+}
+
+// refreshScopes recomputes the model's scopes from its manifest.
+func refreshScopes(ctx context.Context, model *manifestResourceModel) diag.Diagnostics {
+	value, diags := scopesObject(ctx, scopesFromManifest(model.Manifest.ValueString()))
+	model.Scopes = value
+	return diags
+}
+
 func exportsCredentials(exportCredentials types.Bool) bool {
 	return exportCredentials.IsNull() || exportCredentials.IsUnknown() || exportCredentials.ValueBool()
 }
@@ -196,7 +246,11 @@ func (r *manifestResource) ModifyPlan(ctx context.Context, req resource.ModifyPl
 	var plan, config manifestResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
-	if resp.Diagnostics.HasError() || exportsCredentials(plan.ExportCredentials) {
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if exportsCredentials(plan.ExportCredentials) {
 		return
 	}
 
@@ -257,6 +311,12 @@ func (r *manifestResource) Read(ctx context.Context, req resource.ReadRequest, r
 		AppID: state.ID.ValueString(),
 	}, &result)
 	if err != nil {
+		if isAppAccessError(err) {
+			// The app was deleted out-of-band (or access was lost); drop it
+			// from state so the next apply recreates it.
+			resp.State.RemoveResource(ctx)
+			return
+		}
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read app manifest: %s", err))
 		return
 	}
@@ -267,6 +327,7 @@ func (r *manifestResource) Read(ctx context.Context, req resource.ReadRequest, r
 	if !jsonSemanticallyEqual(state.Manifest.ValueString(), string(normalized)) {
 		state.Manifest = types.StringValue(string(normalized))
 	}
+	resp.Diagnostics.Append(refreshScopes(ctx, &state)...)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }

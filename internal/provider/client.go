@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -33,6 +34,7 @@ type SlackClient struct {
 	mu             sync.Mutex
 	tokenUserEmail string
 	teamID         string
+	auth           *authTestResponse
 }
 
 func NewSlackClient(token string) *SlackClient {
@@ -45,9 +47,12 @@ func NewSlackClient(token string) *SlackClient {
 }
 
 type apiEnvelope struct {
-	OK     bool            `json:"ok"`
-	Error  string          `json:"error"`
-	Errors json.RawMessage `json:"errors"`
+	OK               bool            `json:"ok"`
+	Error            string          `json:"error"`
+	Errors           json.RawMessage `json:"errors"`
+	ResponseMetadata struct {
+		Messages []string `json:"messages"`
+	} `json:"response_metadata"`
 }
 
 // APIError is a Slack API response with ok: false. Code is the machine-readable
@@ -58,7 +63,32 @@ type APIError struct {
 }
 
 func (e *APIError) Error() string {
-	return e.Code + e.Details
+	if e.Details != "" {
+		return e.Code + ": " + e.Details
+	}
+	return e.Code
+}
+
+// isAppAccessError reports whether err is Slack saying an app ID is no good:
+// nonexistent, malformed, or not accessible with this token. Different
+// endpoints use different codes for the same situation.
+func isAppAccessError(err error) bool {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	switch apiErr.Code {
+	case "app_not_found", "invalid_app_id", "invalid_arguments":
+		return true
+	}
+	return false
+}
+
+// appAccessErrorDetail is the human explanation for isAppAccessError failures.
+func appAccessErrorDetail(appID string) string {
+	return fmt.Sprintf("Slack does not recognize app %q for this token: the app does not exist, "+
+		"or it is not accessible with this token. Verify the app ID and that the token's user "+
+		"is a collaborator on the app.", appID)
 }
 
 type retryClass int
@@ -116,7 +146,11 @@ func (c *SlackClient) attempt(ctx context.Context, method, contentType string, b
 		return retryNone, 0, err
 	}
 	if !envelope.OK {
-		apiErr := &APIError{Code: envelope.Error, Details: string(envelope.Errors)}
+		details := string(envelope.Errors)
+		if len(envelope.ResponseMetadata.Messages) > 0 {
+			details += strings.Join(envelope.ResponseMetadata.Messages, "; ")
+		}
+		apiErr := &APIError{Code: envelope.Error, Details: details}
 		if envelope.Error == "ratelimited" {
 			return retryThrottle, 0, apiErr
 		}
@@ -173,6 +207,20 @@ type authTestResponse struct {
 	TeamID string `json:"team_id"`
 }
 
+// authTest resolves and caches the token's auth.test identity. The caller
+// must hold c.mu.
+func (c *SlackClient) authTest(ctx context.Context) (*authTestResponse, error) {
+	if c.auth != nil {
+		return c.auth, nil
+	}
+	var auth authTestResponse
+	if err := c.JSONRequest(ctx, "auth.test", struct{}{}, &auth); err != nil {
+		return nil, fmt.Errorf("auth.test: %w", err)
+	}
+	c.auth = &auth
+	return c.auth, nil
+}
+
 // TeamID returns the workspace to request installation approvals for: the
 // provider-configured team_id when set, otherwise the workspace the token
 // belongs to (from auth.test), cached for the provider instance's lifetime.
@@ -182,9 +230,9 @@ func (c *SlackClient) TeamID(ctx context.Context) (string, error) {
 	if c.teamID != "" {
 		return c.teamID, nil
 	}
-	var auth authTestResponse
-	if err := c.JSONRequest(ctx, "auth.test", struct{}{}, &auth); err != nil {
-		return "", fmt.Errorf("auth.test: %w", err)
+	auth, err := c.authTest(ctx)
+	if err != nil {
+		return "", err
 	}
 	c.teamID = auth.TeamID
 	return c.teamID, nil
@@ -223,9 +271,9 @@ func (c *SlackClient) TokenUserEmail(ctx context.Context, appID string) (string,
 		return c.tokenUserEmail, nil
 	}
 
-	var auth authTestResponse
-	if err := c.JSONRequest(ctx, "auth.test", struct{}{}, &auth); err != nil {
-		return "", fmt.Errorf("auth.test: %w", err)
+	auth, err := c.authTest(ctx)
+	if err != nil {
+		return "", err
 	}
 	owners, err := c.ListOwners(ctx, appID)
 	if err != nil {
