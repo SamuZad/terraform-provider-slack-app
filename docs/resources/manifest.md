@@ -16,12 +16,15 @@ Apps that were not created by this provider can be imported by app ID (`terrafor
 ## Example Usage
 
 ```terraform
+# The manifest is an HCL object (no jsonencode). Computed values inside it
+# (like a description referencing another resource) stay localized, so the
+# scopes remain known at plan time and dependent installs are not disturbed.
 resource "slack-app_manifest" "example" {
-  manifest = jsonencode({
+  manifest = {
     display_information = { name = "ci-bot" }
     features            = { bot_user = { display_name = "ci-bot" } }
     oauth_config        = { scopes = { bot = ["chat:write"] } }
-  })
+  }
 }
 ```
 
@@ -30,7 +33,7 @@ resource "slack-app_manifest" "example" {
 
 ### Required
 
-- `manifest` (String) A JSON app manifest encoded as a string. Compared semantically: changes to object key order, whitespace, or array element order (Slack treats manifest arrays such as scopes as sets) do not produce a diff. Attributes Slack adds server-side (`always_online`, `pkce_enabled`, `is_mcp_enabled`, `token_rotation_enabled`, ...) are normalized to their known default values, so omitting them in config is not a diff — but a remote value changed away from its default is.
+- `manifest` (Dynamic) The app manifest as an HCL object (not a JSON string — no `jsonencode`). Computed values inside it (e.g. a description built from another resource) stay localized, so the scopes remain known at plan time and dependent installs are not disturbed. Compared semantically: changes to object key order or array element order (Slack treats manifest arrays such as scopes as sets) do not produce a diff. Attributes Slack adds server-side (`always_online`, `pkce_enabled`, `is_mcp_enabled`, `token_rotation_enabled`, ...) are normalized to their known default values, so omitting them in config is not a diff — but a remote value changed away from its default is.
 
 ### Optional
 

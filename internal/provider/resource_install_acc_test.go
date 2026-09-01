@@ -141,12 +141,12 @@ func TestAccInstallResourceAppToken(t *testing.T) {
 	f := newFakeSlack(t, false)
 	socketModeManifest := providerConfig(f) + `
 resource "slack-app_manifest" "test" {
-  manifest = jsonencode({
+  manifest = {
     display_information = { name = "socket" }
     features            = { bot_user = { display_name = "socket" } }
     oauth_config        = { scopes = { bot = ["chat:write"] } }
     settings            = { socket_mode_enabled = true }
-  })
+  }
 }
 `
 	resource.UnitTest(t, resource.TestCase{

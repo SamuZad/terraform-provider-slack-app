@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.0.3
+
+### Changed
+
+- **Breaking**: `slack-app_manifest.manifest` is now an HCL object instead of
+  a JSON string — remove the `jsonencode(...)` wrapper. With the object form,
+  computed values inside the manifest (e.g. a description built from another
+  resource) stay localized: the scopes remain known at plan time, so dependent
+  installs no longer cascade to "known after apply". Existing state is
+  upgraded automatically on the first run with this version; configs must be
+  updated by hand (a plan-time error points at the fix).
+
 ## 0.0.2
 
 ### Added

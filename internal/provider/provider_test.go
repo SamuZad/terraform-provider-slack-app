@@ -33,11 +33,11 @@ func quoteScopes(scopes []string) string {
 func manifestConfig(name string, scopes []string) string {
 	return fmt.Sprintf(`
 resource "slack-app_manifest" "test" {
-  manifest = jsonencode({
+  manifest = {
     display_information = { name = %q }
     features            = { bot_user = { display_name = %q } }
     oauth_config        = { scopes = { bot = [%s] } }
-  })
+  }
 }
 `, name, name, quoteScopes(scopes))
 }
@@ -45,11 +45,11 @@ resource "slack-app_manifest" "test" {
 func manifestConfigWithUserScopes(name string, botScopes, userScopes []string) string {
 	return fmt.Sprintf(`
 resource "slack-app_manifest" "test" {
-  manifest = jsonencode({
+  manifest = {
     display_information = { name = %q }
     features            = { bot_user = { display_name = %q } }
     oauth_config        = { scopes = { bot = [%s], user = [%s] } }
-  })
+  }
 }
 `, name, name, quoteScopes(botScopes), quoteScopes(userScopes))
 }

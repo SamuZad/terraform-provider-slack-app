@@ -10,11 +10,11 @@ provider "slack-app" {
 }
 
 resource "slack-app_manifest" "bot" {
-  manifest = jsonencode({
+  manifest = {
     display_information = { name = "ci-bot" }
     features            = { bot_user = { display_name = "ci-bot" } }
     oauth_config        = { scopes = { bot = ["chat:write"] } }
-  })
+  }
 }
 
 resource "slack-app_collaborator" "dev" {

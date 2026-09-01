@@ -7,7 +7,10 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/knownvalue"
+	"github.com/hashicorp/terraform-plugin-testing/statecheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
+	"github.com/hashicorp/terraform-plugin-testing/tfjsonpath"
 )
 
 func TestAccManifestResource(t *testing.T) {
@@ -35,7 +38,11 @@ func TestAccManifestResource(t *testing.T) {
 			// A real change updates in place.
 			{
 				Config: providerConfig(f) + manifestConfig("two", []string{"chat:write", "channels:read"}),
-				Check:  resource.TestMatchResourceAttr("slack-app_manifest.test", "manifest", regexp.MustCompile(`two`)),
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue("slack-app_manifest.test",
+						tfjsonpath.New("manifest").AtMapKey("display_information").AtMapKey("name"),
+						knownvalue.StringExact("two")),
+				},
 			},
 			// Import by app ID. Credentials are only issued at creation, so
 			// they cannot be verified against the imported state, and the
@@ -68,12 +75,12 @@ func TestAccManifestResourceRemovedAttributeResetsToDefault(t *testing.T) {
 	config := func(settings string) string {
 		return providerConfig(f) + fmt.Sprintf(`
 resource "slack-app_manifest" "test" {
-  manifest = jsonencode({
+  manifest = {
     display_information = { name = "mcp" }
     features            = { bot_user = { display_name = "mcp" } }
     oauth_config        = { scopes = { bot = ["chat:write"] } }
     settings            = %s
-  })
+  }
 }
 `, settings)
 	}
@@ -107,11 +114,11 @@ func TestAccManifestResourceExportCredentialsDisabled(t *testing.T) {
 	f := newFakeSlack(t, false)
 	config := providerConfig(f) + `
 resource "slack-app_manifest" "test" {
-  manifest = jsonencode({
+  manifest = {
     display_information = { name = "secretless" }
     features            = { bot_user = { display_name = "secretless" } }
     oauth_config        = { scopes = { bot = ["chat:write"] } }
-  })
+  }
   export_credentials = false
 }
 `
