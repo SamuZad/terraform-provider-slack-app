@@ -159,8 +159,8 @@ func (r *installResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 				},
 			},
 			"app_token": schema.StringAttribute{
-				Computed:  true,
-				Sensitive: true,
+				Computed:            true,
+				Sensitive:           true,
 				MarkdownDescription: "The app-level token (`xapp-…`) issued by the installation, if applicable.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
