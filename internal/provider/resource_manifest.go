@@ -16,10 +16,11 @@ import (
 )
 
 var (
-	_ resource.Resource                = &manifestResource{}
-	_ resource.ResourceWithConfigure   = &manifestResource{}
-	_ resource.ResourceWithImportState = &manifestResource{}
-	_ resource.ResourceWithModifyPlan  = &manifestResource{}
+	_ resource.Resource                 = &manifestResource{}
+	_ resource.ResourceWithConfigure    = &manifestResource{}
+	_ resource.ResourceWithImportState  = &manifestResource{}
+	_ resource.ResourceWithModifyPlan   = &manifestResource{}
+	_ resource.ResourceWithUpgradeState = &manifestResource{}
 )
 
 func NewManifestResource() resource.Resource {
@@ -31,15 +32,15 @@ type manifestResource struct {
 }
 
 type manifestResourceModel struct {
-	ID                types.String `tfsdk:"id"`
-	Manifest          types.String `tfsdk:"manifest"`
-	Scopes            types.Object `tfsdk:"scopes"`
-	ExportCredentials types.Bool   `tfsdk:"export_credentials"`
-	ClientID          types.String `tfsdk:"client_id"`
-	ClientSecret      types.String `tfsdk:"client_secret"`
-	VerificationToken types.String `tfsdk:"verification_token"`
-	SigningSecret     types.String `tfsdk:"signing_secret"`
-	OAuthAuthorizeURL types.String `tfsdk:"oauth_authorize_url"`
+	ID                types.String  `tfsdk:"id"`
+	Manifest          types.Dynamic `tfsdk:"manifest"`
+	Scopes            types.Object  `tfsdk:"scopes"`
+	ExportCredentials types.Bool    `tfsdk:"export_credentials"`
+	ClientID          types.String  `tfsdk:"client_id"`
+	ClientSecret      types.String  `tfsdk:"client_secret"`
+	VerificationToken types.String  `tfsdk:"verification_token"`
+	SigningSecret     types.String  `tfsdk:"signing_secret"`
+	OAuthAuthorizeURL types.String  `tfsdk:"oauth_authorize_url"`
 }
 
 type manifestRequest struct {
@@ -68,6 +69,9 @@ func (r *manifestResource) Metadata(_ context.Context, req resource.MetadataRequ
 
 func (r *manifestResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
+		// Version 1: manifest changed from a string attribute to a dynamic
+		// attribute (JSON string or HCL object).
+		Version: 1,
 		MarkdownDescription: "Manages a Slack app via its manifest.\n\n" +
 			"Apps that were not created by this provider can be imported by app ID " +
 			"(`terraform import slack-app_manifest.example A0123456789`). Any app where the " +
@@ -85,15 +89,18 @@ func (r *manifestResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
-			"manifest": schema.StringAttribute{
+			"manifest": schema.DynamicAttribute{
 				Required: true,
-				MarkdownDescription: "A JSON app manifest encoded as a string. Compared semantically: " +
-					"changes to object key order, whitespace, or array element order (Slack treats manifest " +
-					"arrays such as scopes as sets) do not produce a diff. Attributes Slack adds server-side " +
-					"(`always_online`, `pkce_enabled`, `is_mcp_enabled`, `token_rotation_enabled`, ...) are " +
-					"normalized to their known default values, so omitting them in config is not a diff — " +
-					"but a remote value changed away from its default is.",
-				PlanModifiers: []planmodifier.String{
+				MarkdownDescription: "The app manifest as an HCL object (not a JSON string — no " +
+					"`jsonencode`). Computed values inside it (e.g. a description built from another " +
+					"resource) stay localized, so the scopes remain known at plan time and dependent " +
+					"installs are not disturbed. Compared semantically: changes to object key order or " +
+					"array element order (Slack treats manifest arrays such as scopes as sets) do not " +
+					"produce a diff. Attributes Slack adds server-side (`always_online`, `pkce_enabled`, " +
+					"`is_mcp_enabled`, `token_rotation_enabled`, ...) are normalized to their known default " +
+					"values, so omitting them in config is not a diff — but a remote value changed away " +
+					"from its default is.",
+				PlanModifiers: []planmodifier.Dynamic{
 					manifestSemanticEquality{},
 				},
 			},
@@ -170,10 +177,76 @@ func (r *manifestResource) Configure(_ context.Context, req resource.ConfigureRe
 	r.client = req.ProviderData.(*SlackClient)
 }
 
+// manifestResourceModelV0 is the schema-version-0 model, where manifest was a
+// plain string attribute.
+type manifestResourceModelV0 struct {
+	ID                types.String `tfsdk:"id"`
+	Manifest          types.String `tfsdk:"manifest"`
+	Scopes            types.Object `tfsdk:"scopes"`
+	ExportCredentials types.Bool   `tfsdk:"export_credentials"`
+	ClientID          types.String `tfsdk:"client_id"`
+	ClientSecret      types.String `tfsdk:"client_secret"`
+	VerificationToken types.String `tfsdk:"verification_token"`
+	SigningSecret     types.String `tfsdk:"signing_secret"`
+	OAuthAuthorizeURL types.String `tfsdk:"oauth_authorize_url"`
+}
+
+// UpgradeState migrates version-0 state (manifest stored as a JSON string) to
+// the dynamic manifest attribute, converting the string to object form.
+func (r *manifestResource) UpgradeState(context.Context) map[int64]resource.StateUpgrader {
+	return map[int64]resource.StateUpgrader{
+		0: {
+			PriorSchema: &schema.Schema{
+				Attributes: map[string]schema.Attribute{
+					"id":       schema.StringAttribute{Computed: true},
+					"manifest": schema.StringAttribute{Required: true},
+					"scopes": schema.SingleNestedAttribute{
+						Computed:   true,
+						Attributes: scopesSchemaAttributes(false),
+					},
+					"export_credentials": schema.BoolAttribute{Optional: true, Computed: true},
+					"client_id":          schema.StringAttribute{Optional: true, Computed: true},
+					"client_secret":      schema.StringAttribute{Optional: true, Computed: true, Sensitive: true},
+					"verification_token": schema.StringAttribute{Optional: true, Computed: true, Sensitive: true},
+					"signing_secret":     schema.StringAttribute{Optional: true, Computed: true, Sensitive: true},
+					"oauth_authorize_url": schema.StringAttribute{
+						Computed: true,
+					},
+				},
+			},
+			StateUpgrader: func(ctx context.Context, req resource.UpgradeStateRequest, resp *resource.UpgradeStateResponse) {
+				var prior manifestResourceModelV0
+				resp.Diagnostics.Append(req.State.Get(ctx, &prior)...)
+				if resp.Diagnostics.HasError() {
+					return
+				}
+				var decoded interface{}
+				if err := json.Unmarshal([]byte(prior.Manifest.ValueString()), &decoded); err != nil {
+					resp.Diagnostics.AddError("State Upgrade Failed",
+						fmt.Sprintf("The stored manifest is not valid JSON: %s", err))
+					return
+				}
+				upgraded := manifestResourceModel{
+					ID:                prior.ID,
+					Manifest:          types.DynamicValue(goToAttr(ctx, decoded)),
+					Scopes:            prior.Scopes,
+					ExportCredentials: prior.ExportCredentials,
+					ClientID:          prior.ClientID,
+					ClientSecret:      prior.ClientSecret,
+					VerificationToken: prior.VerificationToken,
+					SigningSecret:     prior.SigningSecret,
+					OAuthAuthorizeURL: prior.OAuthAuthorizeURL,
+				}
+				resp.Diagnostics.Append(resp.State.Set(ctx, &upgraded)...)
+			},
+		},
+	}
+}
+
 // manifestSemanticEquality suppresses plan diffs for manifest changes that are
-// only cosmetic: key order, whitespace, or array element order. When the
-// planned value is semantically equal to state, the prior state value is kept
-// so no update is planned.
+// only cosmetic: key order or array element order. When the planned value is
+// semantically equal to state, the prior state value is kept so no update is
+// planned.
 type manifestSemanticEquality struct{}
 
 func (m manifestSemanticEquality) Description(ctx context.Context) string {
@@ -181,14 +254,22 @@ func (m manifestSemanticEquality) Description(ctx context.Context) string {
 }
 
 func (m manifestSemanticEquality) MarkdownDescription(context.Context) string {
-	return "Ignores JSON key order, whitespace, and array element order when comparing manifests."
+	return "Ignores object key order and array element order when comparing manifests."
 }
 
-func (m manifestSemanticEquality) PlanModifyString(_ context.Context, req planmodifier.StringRequest, resp *planmodifier.StringResponse) {
-	if req.StateValue.IsNull() || req.PlanValue.IsNull() || req.PlanValue.IsUnknown() {
+func (m manifestSemanticEquality) PlanModifyDynamic(_ context.Context, req planmodifier.DynamicRequest, resp *planmodifier.DynamicResponse) {
+	if req.StateValue.IsNull() || req.PlanValue.IsNull() {
 		return
 	}
-	if jsonSemanticallyEqual(req.PlanValue.ValueString(), req.StateValue.ValueString()) {
+	planJSON, err := dynamicManifestJSON(req.PlanValue)
+	if err != nil {
+		return // unknown (or unusable) planned value: nothing to compare
+	}
+	stateJSON, err := dynamicManifestJSON(req.StateValue)
+	if err != nil {
+		return
+	}
+	if jsonSemanticallyEqual(planJSON, stateJSON) {
 		resp.PlanValue = req.StateValue
 	}
 }
@@ -208,24 +289,35 @@ func (m manifestScopes) MarkdownDescription(context.Context) string {
 }
 
 func (m manifestScopes) PlanModifyObject(ctx context.Context, req planmodifier.ObjectRequest, resp *planmodifier.ObjectResponse) {
-	var manifest types.String
+	var manifest types.Dynamic
 	resp.Diagnostics.Append(req.Plan.GetAttribute(ctx, path.Root("manifest"), &manifest)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if manifest.IsUnknown() || manifest.IsNull() {
+
+	// A partially unknown object manifest still yields known scopes as long
+	// as the oauth_config.scopes subtree itself is known.
+	scopes, known := dynamicScopes(manifest)
+	if !known {
 		resp.PlanValue = types.ObjectUnknown(scopesAttrTypes())
 		return
 	}
 
-	value, diags := scopesObject(ctx, scopesFromManifest(manifest.ValueString()))
+	value, diags := scopesObject(ctx, scopes)
 	resp.Diagnostics.Append(diags...)
 	resp.PlanValue = value
 }
 
 // refreshScopes recomputes the model's scopes from its manifest.
 func refreshScopes(ctx context.Context, model *manifestResourceModel) diag.Diagnostics {
-	value, diags := scopesObject(ctx, scopesFromManifest(model.Manifest.ValueString()))
+	var diags diag.Diagnostics
+	manifestJSON, err := dynamicManifestJSON(model.Manifest)
+	if err != nil {
+		diags.AddError("Provider Error", fmt.Sprintf("Unable to render the manifest as JSON: %s", err))
+		return diags
+	}
+	value, d := scopesObject(ctx, scopesFromManifest(manifestJSON))
+	diags.Append(d...)
 	model.Scopes = value
 	return diags
 }
@@ -248,6 +340,21 @@ func (r *manifestResource) ModifyPlan(ctx context.Context, req resource.ModifyPl
 	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 	if resp.Diagnostics.HasError() {
 		return
+	}
+
+	if !config.Manifest.IsNull() && !config.Manifest.IsUnknown() && !config.Manifest.IsUnderlyingValueUnknown() {
+		switch config.Manifest.UnderlyingValue().(type) {
+		case types.Object, types.Map:
+		case types.String:
+			resp.Diagnostics.AddAttributeError(path.Root("manifest"), "Invalid Manifest Type",
+				"The manifest must be an HCL object. Remove the jsonencode(...) wrapper and pass the "+
+					"object directly: manifest = { display_information = { ... }, ... }")
+			return
+		default:
+			resp.Diagnostics.AddAttributeError(path.Root("manifest"), "Invalid Manifest Type",
+				"The manifest must be an HCL object.")
+			return
+		}
 	}
 
 	if exportsCredentials(plan.ExportCredentials) {
@@ -278,9 +385,15 @@ func (r *manifestResource) Create(ctx context.Context, req resource.CreateReques
 		return
 	}
 
+	manifestJSON, err := dynamicManifestJSON(plan.Manifest)
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid Manifest", fmt.Sprintf("Unable to render the manifest as JSON: %s", err))
+		return
+	}
+
 	var result manifestCreateResponse
-	err := r.client.JSONRequest(ctx, "apps.manifest.create", manifestRequest{
-		Manifest: normalizeManifest(plan.Manifest.ValueString()),
+	err = r.client.JSONRequest(ctx, "apps.manifest.create", manifestRequest{
+		Manifest: normalizeManifest(manifestJSON),
 	}, &result)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create app: %s", err))
@@ -324,8 +437,14 @@ func (r *manifestResource) Read(ctx context.Context, req resource.ReadRequest, r
 	// Only rewrite state when the exported manifest genuinely differs; Slack
 	// reorders keys and array elements, which is not drift.
 	normalized, _ := json.Marshal(result.Manifest)
-	if !jsonSemanticallyEqual(state.Manifest.ValueString(), string(normalized)) {
-		state.Manifest = types.StringValue(string(normalized))
+	stateJSON := ""
+	if !state.Manifest.IsNull() {
+		if rendered, err := dynamicManifestJSON(state.Manifest); err == nil {
+			stateJSON = rendered
+		}
+	}
+	if !jsonSemanticallyEqual(stateJSON, string(normalized)) {
+		state.Manifest = types.DynamicValue(goToAttr(ctx, result.Manifest))
 	}
 	resp.Diagnostics.Append(refreshScopes(ctx, &state)...)
 
@@ -339,9 +458,15 @@ func (r *manifestResource) Update(ctx context.Context, req resource.UpdateReques
 		return
 	}
 
-	err := r.client.JSONRequest(ctx, "apps.manifest.update", manifestRequest{
+	manifestJSON, err := dynamicManifestJSON(plan.Manifest)
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid Manifest", fmt.Sprintf("Unable to render the manifest as JSON: %s", err))
+		return
+	}
+
+	err = r.client.JSONRequest(ctx, "apps.manifest.update", manifestRequest{
 		AppID:    plan.ID.ValueString(),
-		Manifest: normalizeManifest(plan.Manifest.ValueString()),
+		Manifest: normalizeManifest(manifestJSON),
 	}, nil)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to update app: %s", err))
