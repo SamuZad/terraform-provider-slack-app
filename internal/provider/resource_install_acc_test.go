@@ -34,6 +34,7 @@ func TestAccInstallResource(t *testing.T) {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("slack-app_install.test", "bot_token", "xoxb-fake-A0000001"),
 					resource.TestCheckNoResourceAttr("slack-app_install.test", "user_token"),
+					resource.TestCheckNoResourceAttr("slack-app_install.test", "app_token"),
 					resource.TestCheckResourceAttr("slack-app_install.test", "scopes.bot.#", "2"),
 					resource.TestCheckResourceAttr("slack-app_install.test", "scopes.user.#", "0"),
 				),
@@ -130,6 +131,30 @@ func TestAccInstallResourceWiredScopes(t *testing.T) {
 			{
 				Config:   providerConfig(f) + manifestConfigWithUserScopes("app", []string{"channels:history", "chat:write", "channels:read"}, []string{"search:read"}) + wiredInstallConfig,
 				PlanOnly: true,
+			},
+		},
+	})
+}
+
+// Socket Mode apps get an app-level token; others get none.
+func TestAccInstallResourceAppToken(t *testing.T) {
+	f := newFakeSlack(t, false)
+	socketModeManifest := providerConfig(f) + `
+resource "slack-app_manifest" "test" {
+  manifest = jsonencode({
+    display_information = { name = "socket" }
+    features            = { bot_user = { display_name = "socket" } }
+    oauth_config        = { scopes = { bot = ["chat:write"] } }
+    settings            = { socket_mode_enabled = true }
+  })
+}
+`
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: socketModeManifest + installConfig,
+				Check:  resource.TestCheckResourceAttr("slack-app_install.test", "app_token", "xapp-fake-A0000001"),
 			},
 		},
 	})

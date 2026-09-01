@@ -58,6 +58,7 @@ output "bot_token" {
 
 ### Read-Only
 
+- `app_token` (String, Sensitive) The app-level token (`xapp-…`) issued by the installation, if applicable.
 - `bot_token` (String, Sensitive) The bot token (`xoxb-…`) issued by the installation.
 - `id` (String) The ID of this resource.
 - `user_token` (String, Sensitive) The user token (`xoxp-…`) issued by the installation, if user scopes were requested.

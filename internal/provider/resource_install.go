@@ -41,6 +41,7 @@ type installResourceModel struct {
 	Scopes         types.Object `tfsdk:"scopes"`
 	BotToken       types.String `tfsdk:"bot_token"`
 	UserToken      types.String `tfsdk:"user_token"`
+	AppToken       types.String `tfsdk:"app_token"`
 }
 
 type installRequest struct {
@@ -51,8 +52,9 @@ type installRequest struct {
 
 type installResponse struct {
 	APIAccessTokens struct {
-		Bot  string `json:"bot"`
-		User string `json:"user"`
+		Bot      string `json:"bot"`
+		User     string `json:"user"`
+		AppLevel string `json:"app_level"`
 	} `json:"api_access_tokens"`
 }
 
@@ -152,6 +154,14 @@ func (r *installResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 				Computed:            true,
 				Sensitive:           true,
 				MarkdownDescription: "The user token (`xoxp-…`) issued by the installation, if user scopes were requested.",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"app_token": schema.StringAttribute{
+				Computed:  true,
+				Sensitive: true,
+				MarkdownDescription: "The app-level token (`xapp-…`) issued by the installation, if applicable.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
@@ -264,6 +274,7 @@ func (r *installResource) ModifyPlan(ctx context.Context, req resource.ModifyPla
 	if scopesChanged {
 		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("bot_token"), types.StringUnknown())...)
 		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("user_token"), types.StringUnknown())...)
+		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("app_token"), types.StringUnknown())...)
 	}
 }
 
@@ -437,12 +448,20 @@ func (r *installResource) applyInstall(ctx context.Context, plan *installResourc
 	}
 
 	plan.ID = types.StringValue(appID)
-	plan.BotToken = types.StringValue(result.APIAccessTokens.Bot)
-	if result.APIAccessTokens.User != "" {
-		plan.UserToken = types.StringValue(result.APIAccessTokens.User)
-	} else {
-		plan.UserToken = types.StringNull()
+	setTokens(plan, result)
+}
+
+func stringOrNull(s string) types.String {
+	if s == "" {
+		return types.StringNull()
 	}
+	return types.StringValue(s)
+}
+
+func setTokens(model *installResourceModel, result *installResponse) {
+	model.BotToken = types.StringValue(result.APIAccessTokens.Bot)
+	model.UserToken = stringOrNull(result.APIAccessTokens.User)
+	model.AppToken = stringOrNull(result.APIAccessTokens.AppLevel)
 }
 
 func (r *installResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -524,13 +543,8 @@ func (r *installResource) ImportState(ctx context.Context, req resource.ImportSt
 		ID:             types.StringValue(appID),
 		AppID:          types.StringValue(appID),
 		ApprovalReason: types.StringNull(),
-		BotToken:       types.StringValue(result.APIAccessTokens.Bot),
 	}
-	if result.APIAccessTokens.User != "" {
-		state.UserToken = types.StringValue(result.APIAccessTokens.User)
-	} else {
-		state.UserToken = types.StringNull()
-	}
+	setTokens(&state, result)
 	scopesValue, diags := scopesObject(ctx, scopes)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
