@@ -281,11 +281,19 @@ func (f *fakeSlack) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		// developerInstall is idempotent: repeated installs re-issue the same
 		// tokens for the app, matching observed real-API behavior. A user
-		// token is only issued when user scopes were requested.
+		// token is only issued when user scopes were requested, and an
+		// app-level token only when the manifest enables Socket Mode.
 		appID := param(p, "app_id")
 		tokens := map[string]string{"bot": "xoxb-fake-" + appID}
 		if userScopes, _ := p["user_scopes"].([]interface{}); len(userScopes) > 0 {
 			tokens["user"] = "xoxp-fake-" + appID
+		}
+		if m, ok := app.Manifest.(map[string]interface{}); ok {
+			if settings, ok := m["settings"].(map[string]interface{}); ok {
+				if enabled, _ := settings["socket_mode_enabled"].(bool); enabled {
+					tokens["app_level"] = "xapp-fake-" + appID
+				}
+			}
 		}
 		writeJSON(w, map[string]interface{}{
 			"ok":                true,
