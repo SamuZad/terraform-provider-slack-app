@@ -29,6 +29,7 @@ func applyManifestDefaults(v interface{}) interface{} {
 	setIfAbsent(settings, "socket_mode_enabled", false)
 	setIfAbsent(settings, "is_mcp_enabled", false)
 	setIfAbsent(settings, "token_rotation_enabled", false)
+	setIfAbsent(settings, "app_level_token_rotation_enabled", false)
 	if features, ok := m["features"].(map[string]interface{}); ok {
 		if botUser, ok := features["bot_user"].(map[string]interface{}); ok {
 			setIfAbsent(botUser, "always_online", true)
