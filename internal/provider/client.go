@@ -17,9 +17,9 @@ import (
 
 const apiBaseURL = "https://slack.com/api/"
 
-// maxAttempts bounds retries for rate limits and 5xx responses; 404 responses
-// are retried exactly once.
-const maxAttempts = 5
+// maxAttempts bounds total attempts for rate limits and 5xx responses; 404
+// responses are retried exactly once.
+const maxAttempts = 10
 
 type SlackClient struct {
 	token        string

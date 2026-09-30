@@ -78,7 +78,7 @@ func TestRetryServerErrorsThenSuccess(t *testing.T) {
 func TestServerErrorGivesUpAfterMaxAttempts(t *testing.T) {
 	client, calls := testClient(t, []func(w http.ResponseWriter){status(500)})
 	err := client.JSONRequest(context.Background(), "test", struct{}{}, nil)
-	if err == nil || !strings.Contains(err.Error(), "giving up after 5 attempts") {
+	if err == nil || !strings.Contains(err.Error(), "giving up after 10 attempts") {
 		t.Fatalf("expected giving-up error, got %v", err)
 	}
 	if *calls != maxAttempts {
