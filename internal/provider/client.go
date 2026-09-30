@@ -196,11 +196,15 @@ func (c *SlackClient) send(ctx context.Context, method, contentType string, body
 
 // JSONRequest calls Slack API methods that accept JSON bodies with bearer auth.
 func (c *SlackClient) JSONRequest(ctx context.Context, method string, body interface{}, resultJson interface{}) error {
+	return c.jsonRequestWithToken(ctx, method, body, c.token, resultJson)
+}
+
+func (c *SlackClient) jsonRequestWithToken(ctx context.Context, method string, body interface{}, token string, resultJson interface{}) error {
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return err
 	}
-	return c.send(ctx, method, "application/json; charset=utf-8", payload, true, c.token, resultJson)
+	return c.send(ctx, method, "application/json; charset=utf-8", payload, true, token, resultJson)
 }
 
 // BotJSONRequest calls a Slack Web API method using the configured bot token.
@@ -208,11 +212,15 @@ func (c *SlackClient) BotJSONRequest(ctx context.Context, method string, body in
 	if c.botToken == "" {
 		return errors.New("bot token is not configured")
 	}
-	payload, err := json.Marshal(body)
-	if err != nil {
-		return err
+	return c.jsonRequestWithToken(ctx, method, body, c.botToken, resultJson)
+}
+
+func (c *SlackClient) AuthTestToken(ctx context.Context, token string) (*authTestResponse, error) {
+	var auth authTestResponse
+	if err := c.jsonRequestWithToken(ctx, "auth.test", struct{}{}, token, &auth); err != nil {
+		return nil, fmt.Errorf("auth.test: %w", err)
 	}
-	return c.send(ctx, method, "application/json; charset=utf-8", payload, true, c.botToken, resultJson)
+	return &auth, nil
 }
 
 // BotFormRequest calls a Slack Web API method using the configured bot token

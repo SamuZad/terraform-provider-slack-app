@@ -61,6 +61,7 @@ output "bot_token" {
 - `app_token` (String, Sensitive) The app-level token (`xapp-…`) issued by the installation, if applicable.
 - `bot_token` (String, Sensitive) The bot token (`xoxb-…`) issued by the installation.
 - `id` (String) The ID of this resource.
+- `user_id` (String) The Slack user ID of the installed app's bot user.
 - `user_token` (String, Sensitive) The user token (`xoxp-…`) issued by the installation, if user scopes were requested.
 
 <a id="nestedatt--scopes"></a>

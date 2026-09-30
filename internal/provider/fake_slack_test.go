@@ -167,7 +167,11 @@ func (f *fakeSlack) handle(w http.ResponseWriter, r *http.Request) {
 	p := requestParams(r)
 	switch r.URL.Path {
 	case "/auth.test":
-		writeJSON(w, map[string]interface{}{"ok": true, "user_id": fakeTokenUserID, "team_id": "T0000001"})
+		userID := fakeTokenUserID
+		if strings.HasPrefix(r.Header.Get("Authorization"), "Bearer xoxb-fake-") {
+			userID = "UBOT00001"
+		}
+		writeJSON(w, map[string]interface{}{"ok": true, "user_id": userID, "team_id": "T0000001"})
 
 	case "/users.lookupByEmail":
 		if param(p, "email") != "member@example.com" {

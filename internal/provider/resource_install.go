@@ -40,6 +40,7 @@ type installResourceModel struct {
 	ApprovalReason types.String `tfsdk:"approval_reason"`
 	Scopes         types.Object `tfsdk:"scopes"`
 	BotToken       types.String `tfsdk:"bot_token"`
+	BotUserID      types.String `tfsdk:"user_id"`
 	UserToken      types.String `tfsdk:"user_token"`
 	AppToken       types.String `tfsdk:"app_token"`
 }
@@ -146,6 +147,13 @@ func (r *installResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 				Computed:            true,
 				Sensitive:           true,
 				MarkdownDescription: "The bot token (`xoxb-…`) issued by the installation.",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"user_id": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "The Slack user ID of the installed app's bot user.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
@@ -464,6 +472,15 @@ func setTokens(model *installResourceModel, result *installResponse) {
 	model.AppToken = stringOrNull(result.APIAccessTokens.AppLevel)
 }
 
+func (r *installResource) setBotUserID(ctx context.Context, model *installResourceModel, diags *diag.Diagnostics) {
+	auth, err := r.client.AuthTestToken(ctx, model.BotToken.ValueString())
+	if err != nil {
+		diags.AddError("Install Identification Failed", fmt.Sprintf("Unable to identify the installed bot user: %s", err))
+		return
+	}
+	model.BotUserID = types.StringValue(auth.UserID)
+}
+
 func (r *installResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan installResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -472,6 +489,10 @@ func (r *installResource) Create(ctx context.Context, req resource.CreateRequest
 	}
 
 	r.applyInstall(ctx, &plan, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	r.setBotUserID(ctx, &plan, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -500,6 +521,10 @@ func (r *installResource) Update(ctx context.Context, req resource.UpdateRequest
 	// state-only.
 	if plan.BotToken.IsUnknown() {
 		r.applyInstall(ctx, &plan, &resp.Diagnostics)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		r.setBotUserID(ctx, &plan, &resp.Diagnostics)
 		if resp.Diagnostics.HasError() {
 			return
 		}
@@ -545,6 +570,10 @@ func (r *installResource) ImportState(ctx context.Context, req resource.ImportSt
 		ApprovalReason: types.StringNull(),
 	}
 	setTokens(&state, result)
+	r.setBotUserID(ctx, &state, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	scopesValue, diags := scopesObject(ctx, scopes)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {

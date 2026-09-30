@@ -33,6 +33,7 @@ func TestAccInstallResource(t *testing.T) {
 				Config: providerConfig(f) + manifestConfig("app", []string{"chat:write", "channels:read"}) + installConfig,
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("slack-app_install.test", "bot_token", "xoxb-fake-A0000001"),
+					resource.TestCheckResourceAttr("slack-app_install.test", "user_id", "UBOT00001"),
 					resource.TestCheckNoResourceAttr("slack-app_install.test", "user_token"),
 					resource.TestCheckNoResourceAttr("slack-app_install.test", "app_token"),
 					resource.TestCheckResourceAttr("slack-app_install.test", "scopes.bot.#", "2"),
