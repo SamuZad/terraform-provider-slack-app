@@ -26,7 +26,8 @@ type slackAppProvider struct {
 }
 
 type slackAppProviderModel struct {
-	Token                  types.String `tfsdk:"token"`
+	ConfigurationToken     types.String `tfsdk:"configuration_token"`
+	BotToken               types.String `tfsdk:"bot_token"`
 	BaseURL                types.String `tfsdk:"base_url"`
 	TeamID                 types.String `tfsdk:"team_id"`
 	ApprovalTimeoutSeconds types.Int64  `tfsdk:"approval_timeout_seconds"`
@@ -40,22 +41,27 @@ func (p *slackAppProvider) Metadata(_ context.Context, _ provider.MetadataReques
 func (p *slackAppProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Manages the full developer lifecycle of Slack apps: the app manifest, app collaborators, " +
-			"and developer installs (which return bot and user tokens, and can wait for admin approval first).\n\n" +
+			"developer installs (which return bot and user tokens, and can wait for admin approval first), and Slack conversations.\n\n" +
 			"Existing apps that were not created by this provider can be imported; any app where the " +
 			"authenticated user is a collaborator can be imported.\n\n" +
-			"**Token requirements:** the provider works with two types of credentials. A Slack CLI service token " +
-			"(obtained via `slack auth token`) works with all resources in this provider. An app configuration token " +
-			"(https://api.slack.com/authentication/config-tokens) can **only** be used for the `manifest` resource.\n\n" +
-			"Both credential types are issued to a specific Slack user. That user is a collaborator on every app " +
+			"**Token requirements:** `configuration_token` accepts an app configuration token for manifest operations " +
+			"or a Slack CLI service token (obtained via `slack auth token`) for collaborator and installation operations. " +
+			"`bot_token` is a bot token with the channel management scopes required by the `conversation` resource.\n\n" +
+			"The configuration token is issued to a specific Slack user. That user is a collaborator on every app " +
 			"managed through this provider, and the `collaborator` resource refuses to remove them: doing so would " +
 			"revoke the provider's own access to the app and orphan its resources.",
 		Attributes: map[string]schema.Attribute{
-			"token": schema.StringAttribute{
+			"configuration_token": schema.StringAttribute{
 				Optional:  true,
 				Sensitive: true,
-				MarkdownDescription: "A Slack CLI service token from `slack auth token`, or an app " +
-					"configuration token (manifest resource only). " +
-					"Can be set via the `SLACK_TOKEN` environment variable.",
+				MarkdownDescription: "An app configuration token for manifest operations, or a Slack CLI service token " +
+					"for collaborator and installation operations. Can be set via the `SLACK_CONFIGURATION_TOKEN` environment variable.",
+			},
+			"bot_token": schema.StringAttribute{
+				Optional:  true,
+				Sensitive: true,
+				MarkdownDescription: "A bot token with the channel management scopes required by `slack-app_conversation`. " +
+					"Can be set via the `SLACK_BOT_TOKEN` environment variable.",
 			},
 			"base_url": schema.StringAttribute{
 				Optional: true,
@@ -85,10 +91,15 @@ func (p *slackAppProvider) Configure(ctx context.Context, req provider.Configure
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if config.Token.IsNull() {
-		config.Token = types.StringValue(os.Getenv("SLACK_TOKEN"))
+	if config.ConfigurationToken.IsNull() {
+		config.ConfigurationToken = types.StringValue(os.Getenv("SLACK_CONFIGURATION_TOKEN"))
 	}
-	client := NewSlackClient(config.Token.ValueString())
+	client := NewSlackClient(config.ConfigurationToken.ValueString())
+	if !config.BotToken.IsNull() {
+		client.botToken = config.BotToken.ValueString()
+	} else {
+		client.botToken = os.Getenv("SLACK_BOT_TOKEN")
+	}
 	if !config.BaseURL.IsNull() {
 		base := config.BaseURL.ValueString()
 		if !strings.HasSuffix(base, "/") {
@@ -107,7 +118,9 @@ func (p *slackAppProvider) Configure(ctx context.Context, req provider.Configure
 }
 
 func (p *slackAppProvider) DataSources(_ context.Context) []func() datasource.DataSource {
-	return []func() datasource.DataSource{}
+	return []func() datasource.DataSource{
+		NewUserDataSource,
+	}
 }
 
 func (p *slackAppProvider) Resources(_ context.Context) []func() resource.Resource {
@@ -115,5 +128,7 @@ func (p *slackAppProvider) Resources(_ context.Context) []func() resource.Resour
 		NewManifestResource,
 		NewCollaboratorResource,
 		NewInstallResource,
+		NewConversationResource,
+		NewConversationMemberResource,
 	}
 }

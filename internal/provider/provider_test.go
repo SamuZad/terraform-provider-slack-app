@@ -16,8 +16,9 @@ var testProviderFactories = map[string]func() (tfprotov6.ProviderServer, error){
 func providerConfig(f *fakeSlack) string {
 	return fmt.Sprintf(`
 provider "slack-app" {
-  token    = "xoxp-test-token"
-  base_url = %q
+	configuration_token = "xoxp-test-token"
+	bot_token           = "xoxb-test-token"
+	base_url            = %q
 }
 `, f.url())
 }

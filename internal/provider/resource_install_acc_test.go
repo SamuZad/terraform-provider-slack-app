@@ -184,7 +184,7 @@ func TestAccInstallResourceApprovalTimeout(t *testing.T) {
 	f.stayPending = true
 	config := fmt.Sprintf(`
 provider "slack-app" {
-  token                    = "xoxp-test-token"
+	configuration_token      = "xoxp-test-token"
   base_url                 = %q
   approval_timeout_seconds = 0
 }

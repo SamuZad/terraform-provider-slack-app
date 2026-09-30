@@ -23,6 +23,7 @@ const maxAttempts = 5
 
 type SlackClient struct {
 	token        string
+	botToken     string
 	http         http.Client
 	baseURL      string
 	retryBackoff time.Duration
@@ -103,14 +104,14 @@ const (
 // attempt performs a single API call and classifies any failure for the retry
 // loop in send. delay is only set for throttled responses that carry a
 // Retry-After header.
-func (c *SlackClient) attempt(ctx context.Context, method, contentType string, body []byte, bearer bool, resultJson interface{}) (retryClass, time.Duration, error) {
+func (c *SlackClient) attempt(ctx context.Context, method, contentType string, body []byte, bearer bool, token string, resultJson interface{}) (retryClass, time.Duration, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+method, bytes.NewReader(body))
 	if err != nil {
 		return retryNone, 0, err
 	}
 	request.Header.Set("Content-Type", contentType)
 	if bearer {
-		request.Header.Set("Authorization", "Bearer "+c.token)
+		request.Header.Set("Authorization", "Bearer "+token)
 	}
 
 	// Transport errors are not retried: the request may already have been
@@ -165,10 +166,10 @@ func (c *SlackClient) attempt(ctx context.Context, method, contentType string, b
 // send performs an API call, retrying rate limits (respecting Retry-After) and
 // 5xx responses with exponential backoff up to maxAttempts, and 404 responses
 // exactly once.
-func (c *SlackClient) send(ctx context.Context, method, contentType string, body []byte, bearer bool, resultJson interface{}) error {
+func (c *SlackClient) send(ctx context.Context, method, contentType string, body []byte, bearer bool, token string, resultJson interface{}) error {
 	backoff := c.retryBackoff
 	for attempt := 1; ; attempt++ {
-		class, delay, err := c.attempt(ctx, method, contentType, body, bearer, resultJson)
+		class, delay, err := c.attempt(ctx, method, contentType, body, bearer, token, resultJson)
 		if err == nil {
 			return nil
 		}
@@ -199,7 +200,29 @@ func (c *SlackClient) JSONRequest(ctx context.Context, method string, body inter
 	if err != nil {
 		return err
 	}
-	return c.send(ctx, method, "application/json; charset=utf-8", payload, true, resultJson)
+	return c.send(ctx, method, "application/json; charset=utf-8", payload, true, c.token, resultJson)
+}
+
+// BotJSONRequest calls a Slack Web API method using the configured bot token.
+func (c *SlackClient) BotJSONRequest(ctx context.Context, method string, body interface{}, resultJson interface{}) error {
+	if c.botToken == "" {
+		return errors.New("bot token is not configured")
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	return c.send(ctx, method, "application/json; charset=utf-8", payload, true, c.botToken, resultJson)
+}
+
+// BotFormRequest calls a Slack Web API method using the configured bot token
+// and form-encoded arguments. This is used for methods documented as GET
+// endpoints, which do not consistently parse JSON bodies when sent as POST.
+func (c *SlackClient) BotFormRequest(ctx context.Context, method string, form url.Values, resultJson interface{}) error {
+	if c.botToken == "" {
+		return errors.New("bot token is not configured")
+	}
+	return c.send(ctx, method, "application/x-www-form-urlencoded; charset=utf-8", []byte(form.Encode()), true, c.botToken, resultJson)
 }
 
 type authTestResponse struct {
@@ -292,5 +315,5 @@ func (c *SlackClient) TokenUserEmail(ctx context.Context, appID string) (string,
 // such as the undocumented developer.* endpoints used by the Slack CLI.
 func (c *SlackClient) FormRequest(ctx context.Context, method string, form url.Values, resultJson interface{}) error {
 	form.Set("token", c.token)
-	return c.send(ctx, method, "application/x-www-form-urlencoded; charset=utf-8", []byte(form.Encode()), false, resultJson)
+	return c.send(ctx, method, "application/x-www-form-urlencoded; charset=utf-8", []byte(form.Encode()), false, c.token, resultJson)
 }
