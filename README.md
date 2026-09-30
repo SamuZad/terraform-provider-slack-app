@@ -39,7 +39,10 @@ Three credential roles are supported:
   ([config tokens](https://api.slack.com/authentication/config-tokens)) for the
   manifest resource.
 - `bot_token` is the installed app's bot token and is used by the conversation
-  resource. Set the `SLACK_BOT_TOKEN` environment variable or pass it directly.
+  and user data source resources. Set the `SLACK_BOT_TOKEN` environment variable
+  or pass it directly. The app must request these bot scopes:
+  `channels:manage`, `channels:read`, `groups:write`, `groups:read`, and
+  `users:read.email`.
 
 The token's user is a collaborator on every app it creates; the
 `collaborator` resource refuses to remove that user, since doing so would
