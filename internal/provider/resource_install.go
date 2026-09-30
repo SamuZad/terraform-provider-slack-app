@@ -506,6 +506,12 @@ func (r *installResource) Read(ctx context.Context, req resource.ReadRequest, re
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if state.BotUserID.IsNull() || state.BotUserID.IsUnknown() {
+		r.setBotUserID(ctx, &state, &resp.Diagnostics)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
