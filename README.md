@@ -6,7 +6,8 @@ can wait for admin approval first).
 
 ```hcl
 provider "slack-app" {
-  token = var.slack_token # or the SLACK_TOKEN environment variable
+  configuration_token = var.configuration_token # or SLACK_CONFIGURATION_TOKEN
+  bot_token           = var.bot_token           # or SLACK_BOT_TOKEN
 }
 
 resource "slack-app_manifest" "bot" {
@@ -31,12 +32,17 @@ resource "slack-app_install" "bot" {
 
 ## Credentials
 
-Two token types work, both issued to a specific Slack user:
+Three credential roles are supported:
 
-- A **Slack CLI service token** (`slack auth token`) works with every resource.
-- An **app configuration token**
-  ([config tokens](https://api.slack.com/authentication/config-tokens)) works
-  with the `manifest` resource only.
+- `configuration_token` accepts a **Slack CLI service token** (`slack auth token`)
+  for collaborator and installation resources, or an **app configuration token**
+  ([config tokens](https://api.slack.com/authentication/config-tokens)) for the
+  manifest resource.
+- `bot_token` is the installed app's bot token and is used by the conversation
+  and user data source resources. Set the `SLACK_BOT_TOKEN` environment variable
+  or pass it directly. The app must request these bot scopes:
+  `channels:manage`, `channels:read`, `groups:write`, `groups:read`, and
+  `users:read.email`.
 
 The token's user is a collaborator on every app it creates; the
 `collaborator` resource refuses to remove that user, since doing so would

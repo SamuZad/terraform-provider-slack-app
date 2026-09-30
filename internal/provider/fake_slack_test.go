@@ -33,6 +33,12 @@ type fakeApproval struct {
 	Status string
 }
 
+type fakeConversation struct {
+	Name      string
+	IsPrivate bool
+	Members   []string
+}
+
 // fakeSlack is an in-memory Slack API implementing the endpoints the provider
 // calls, with the error behaviors observed against the real API (app_not_found
 // for missing and inaccessible apps alike, user_already_owner on duplicate
@@ -47,12 +53,14 @@ type fakeSlack struct {
 	// them on the first poll.
 	stayPending bool
 
-	apps      map[string]*fakeApp
-	approvals []*fakeApproval
+	apps          map[string]*fakeApp
+	conversations map[string]*fakeConversation
+	approvals     []*fakeApproval
 	// lastUpdatedManifest is the raw manifest string received by the most
 	// recent apps.manifest.update call, before enrichment.
 	lastUpdatedManifest string
 	nextApp             int
+	nextConversation    int
 	nextUser            int
 	nextReq             int
 
@@ -63,6 +71,7 @@ func newFakeSlack(t *testing.T, requireApproval bool) *fakeSlack {
 	f := &fakeSlack{
 		requireApproval: requireApproval,
 		apps:            map[string]*fakeApp{},
+		conversations:   map[string]*fakeConversation{},
 	}
 	f.server = httptest.NewServer(http.HandlerFunc(f.handle))
 	t.Cleanup(f.server.Close)
@@ -158,7 +167,21 @@ func (f *fakeSlack) handle(w http.ResponseWriter, r *http.Request) {
 	p := requestParams(r)
 	switch r.URL.Path {
 	case "/auth.test":
-		writeJSON(w, map[string]interface{}{"ok": true, "user_id": fakeTokenUserID, "team_id": "T0000001"})
+		userID := fakeTokenUserID
+		if strings.HasPrefix(r.Header.Get("Authorization"), "Bearer xoxb-fake-") {
+			userID = "UBOT00001"
+		}
+		writeJSON(w, map[string]interface{}{"ok": true, "user_id": userID, "team_id": "T0000001"})
+
+	case "/users.lookupByEmail":
+		if param(p, "email") != "member@example.com" {
+			fakeAPIError(w, "users_not_found")
+			return
+		}
+		writeJSON(w, map[string]interface{}{
+			"ok":   true,
+			"user": map[string]string{"id": "U12345678", "email": "member@example.com"},
+		})
 
 	case "/apps.manifest.create":
 		var manifest interface{}
@@ -331,6 +354,87 @@ func (f *fakeSlack) handle(w http.ResponseWriter, r *http.Request) {
 
 	case "/apps.approvals.requests.cancel":
 		writeJSON(w, map[string]interface{}{"ok": true})
+
+	case "/conversations.create":
+		for _, conversation := range f.conversations {
+			if conversation.Name == param(p, "name") {
+				fakeAPIError(w, "name_taken")
+				return
+			}
+		}
+		f.nextConversation++
+		id := fmt.Sprintf("C%07d", f.nextConversation)
+		isPrivate, _ := p["is_private"].(bool)
+		f.conversations[id] = &fakeConversation{Name: param(p, "name"), IsPrivate: isPrivate}
+		writeJSON(w, map[string]interface{}{
+			"ok":      true,
+			"channel": map[string]interface{}{"id": id, "name": param(p, "name"), "is_private": isPrivate},
+		})
+
+	case "/conversations.info":
+		if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+			fakeAPIError(w, "missing_argument")
+			return
+		}
+		conversation, ok := f.conversations[param(p, "channel")]
+		if !ok {
+			fakeAPIError(w, "channel_not_found")
+			return
+		}
+		writeJSON(w, map[string]interface{}{
+			"ok": true,
+			"channel": map[string]interface{}{
+				"id": param(p, "channel"), "name": conversation.Name, "is_private": conversation.IsPrivate,
+			},
+		})
+
+	case "/conversations.archive":
+		if _, ok := f.conversations[param(p, "channel")]; !ok {
+			fakeAPIError(w, "channel_not_found")
+			return
+		}
+		delete(f.conversations, param(p, "channel"))
+		writeJSON(w, map[string]interface{}{"ok": true})
+
+	case "/conversations.invite":
+		conversation, ok := f.conversations[param(p, "channel")]
+		if !ok {
+			fakeAPIError(w, "channel_not_found")
+			return
+		}
+		userID := param(p, "users")
+		for _, member := range conversation.Members {
+			if member == userID {
+				fakeAPIError(w, "already_in_channel")
+				return
+			}
+		}
+		conversation.Members = append(conversation.Members, userID)
+		writeJSON(w, map[string]interface{}{"ok": true})
+
+	case "/conversations.members":
+		conversation, ok := f.conversations[param(p, "channel")]
+		if !ok {
+			fakeAPIError(w, "channel_not_found")
+			return
+		}
+		writeJSON(w, map[string]interface{}{"ok": true, "members": conversation.Members})
+
+	case "/conversations.kick":
+		conversation, ok := f.conversations[param(p, "channel")]
+		if !ok {
+			fakeAPIError(w, "channel_not_found")
+			return
+		}
+		userID := param(p, "user")
+		for i, member := range conversation.Members {
+			if member == userID {
+				conversation.Members = append(conversation.Members[:i], conversation.Members[i+1:]...)
+				writeJSON(w, map[string]interface{}{"ok": true})
+				return
+			}
+		}
+		fakeAPIError(w, "user_not_in_channel")
 
 	default:
 		fakeAPIError(w, "unknown_method")
